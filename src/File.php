@@ -43,6 +43,14 @@ class File extends \File {
 	protected $repoClass = Repo::class;
 
 	/**
+	 * Thumbnail width steps allowed by Wikimedia Commons ($wgThumbnailSteps).
+	 * Requests for other widths fail; clamp to the smallest step >= requested width.
+	 * @see https://www.mediawiki.org/wiki/Manual:$wgThumbnailSteps
+	 * @see https://wikimedi.ca/wiki/Gestion:T%C3%A2ches/Liste/785
+	 */
+	private const REMOTE_THUMB_STEPS = [ 20, 40, 60, 120, 250, 330, 500, 960, 1280, 1920, 3840 ];
+
+	/**
 	 * @param Title|string|bool $title
 	 * @param Repo $repo
 	 * @param array $info
@@ -202,9 +210,12 @@ class File extends \File {
 			throw new \Exception( "RENDER_NOW not supported by QuickInstantCommons" );
 		}
 
-		$otherParams = $this->hasGoodHandler() ? $this->handler->makeParamString( $params ) : null;
 		$width = $params['width'] ?? -1;
 		$height = $params['height'] ?? -1;
+		$width = $this->clampWidthToRemoteSteps( $width );
+		$params['width'] = $width;
+
+		$otherParams = $this->hasGoodHandler() ? $this->handler->makeParamString( $params ) : null;
 		$combinedParams = (array)$otherParams + [ 'width' => $width, 'height' => $height ];
 
 		$normalisedParams = $params;
@@ -264,6 +275,25 @@ class File extends \File {
 		} else {
 			return new ThumbnailImage( $this, $thumbUrl, false, $params );
 		}
+	}
+
+	/**
+	 * Clamp requested thumbnail width to the smallest allowed step >= width.
+	 * Wikimedia Commons only serves thumbnails at $wgThumbnailSteps; other sizes 404.
+	 *
+	 * @param int $width Requested width (unchanged if <= 0 or > max step)
+	 * @return int
+	 */
+	private function clampWidthToRemoteSteps( $width ) {
+		if ( $width <= 0 ) {
+			return $width;
+		}
+		foreach ( self::REMOTE_THUMB_STEPS as $step ) {
+			if ( $width <= $step ) {
+				return $step;
+			}
+		}
+		return $width;
 	}
 
 	/**
