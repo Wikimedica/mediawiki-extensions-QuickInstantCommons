@@ -212,8 +212,6 @@ class File extends \File {
 
 		$width = $params['width'] ?? -1;
 		$height = $params['height'] ?? -1;
-		$width = $this->clampWidthToRemoteSteps( $width );
-		$params['width'] = $width;
 
 		$otherParams = $this->hasGoodHandler() ? $this->handler->makeParamString( $params ) : null;
 		$combinedParams = (array)$otherParams + [ 'width' => $width, 'height' => $height ];
@@ -231,6 +229,7 @@ class File extends \File {
 			// and the path is supposed to be an FS path. This is due to getScalerType()
 			// getting called on the path and clobbering $thumb->getUrl() if it's false.
 			$thumbName = $this->thumbName( $normalisedParams );
+			$thumbName = $this->clampThumbNameWidth( $thumbName );
 			$thumbUrl = $this->getThumbUrl( $thumbName );
 			$thumb = $this->handler->getTransform( $this, "/dev/null", $thumbUrl, $params );
 		} else {
@@ -278,22 +277,30 @@ class File extends \File {
 	}
 
 	/**
-	 * Clamp requested thumbnail width to the smallest allowed step >= width.
-	 * Wikimedia Commons only serves thumbnails at $wgThumbnailSteps; other sizes 404.
+	 * Clamp the width encoded in a thumbnail file name to the nearest
+	 * allowed step. Supports the standard pattern:
 	 *
-	 * @param int $width Requested width (unchanged if <= 0 or > max step)
-	 * @return int
+	 *   200px-Example.jpg
+	 *
+	 * @param string $thumbName
+	 * @return string
 	 */
-	private function clampWidthToRemoteSteps( $width ) {
-		if ( $width <= 0 ) {
-			return $width;
-		}
-		foreach ( self::REMOTE_THUMB_STEPS as $step ) {
-			if ( $width <= $step ) {
-				return $step;
+	private function clampThumbNameWidth( $thumbName ) {
+		if ( preg_match( '/^(\d+)(px)(-.+)$/', $thumbName, $m ) ) {
+			$origWidth = (int)$m[1];
+			if ( $origWidth > 0 ) {
+				foreach ( self::REMOTE_THUMB_STEPS as $step ) {
+					if ( $origWidth <= $step ) {
+						if ( $step !== $origWidth ) {
+							return $step . $m[2] . $m[3];
+						}
+						break;
+					}
+				}
 			}
 		}
-		return $width;
+
+		return $thumbName;
 	}
 
 	/**
