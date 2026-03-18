@@ -234,6 +234,21 @@ class File extends \File {
 			$this->handler->normaliseParams( $this, $normalisedParams );
 		}
 
+		// Apply thumbnail step snapping, mirroring MW 1.45's TransformationalImageHandler::normaliseParams().
+		// The physical (fetch) width is snapped up to the next configured step so the foreign repo
+		// serves a cached thumbnail, while the display width in $params stays at the originally
+		// requested size and the browser downscales via HTML attributes.
+		$srcWidth = $this->getWidth();
+		$srcHeight = $this->getHeight();
+		if ( isset( $normalisedParams['physicalWidth'] ) && $srcWidth && $srcHeight ) {
+			$normalisedParams['physicalWidth'] = $this->getSteppedThumbWidth(
+				$normalisedParams['physicalWidth'], $srcWidth, $srcHeight
+			);
+			$normalisedParams['physicalHeight'] = \File::scaleHeight(
+				$srcWidth, $srcHeight, $normalisedParams['physicalWidth']
+			);
+		}
+
 		$thumbUrl = false;
 		$thumbWidth = $width;
 		$thumbHeight = $height;
@@ -245,17 +260,33 @@ class File extends \File {
 			$thumbUrl = $this->getThumbUrl( $thumbName );
 			$thumb = $this->handler->getTransform( $this, "/dev/null", $thumbUrl, $params );
 		} else {
+			// For the API path, snap the fetch width to the next step so the foreign repo
+			// serves a cached thumbnail, but keep original dimensions for HTML display.
+			$fetchWidth = $width;
+			$fetchHeight = $height;
+			if ( $width !== -1 && $srcWidth && $srcHeight ) {
+				$fetchWidth = $this->getSteppedThumbWidth( $width, $srcWidth, $srcHeight );
+				if ( $fetchWidth !== $width ) {
+					$fetchHeight = \File::scaleHeight( $srcWidth, $srcHeight, $fetchWidth );
+				}
+			}
 			// Our repo extends the base class with an extra argument.
 			$res = $this->repo->getThumbUrlFromCache(
 				$this->getName(),
-				$width,
-				$height,
+				$fetchWidth,
+				$fetchHeight,
 				$otherParams,
 				$this->getResponsiveParams( $combinedParams )
 			);
 			$thumbUrl = $res['url'];
-			$thumbWidth = $res['width'];
-			$thumbHeight = $res['height'];
+			// If we stepped up, keep original display dimensions so the browser downscales.
+			if ( $fetchWidth !== $width ) {
+				$thumbWidth = $width;
+				$thumbHeight = $height;
+			} else {
+				$thumbWidth = $res['width'];
+				$thumbHeight = $res['height'];
+			}
 			// Hacky, try not to use fileicons in the no handler case, as that's not a real thumb.
 			// We're trying to defer rendering to foreign repo, but at the same time we don't
 			// want to use the fallback thumbs.
@@ -267,8 +298,8 @@ class File extends \File {
 
 				return $this->repo->getThumbError(
 					$this->getName(),
-					$width,
-					$height,
+					$fetchWidth,
+					$fetchHeight,
 					$otherParams,
 					$wgLang->getCode()
 				);
@@ -286,6 +317,54 @@ class File extends \File {
 		} else {
 			return new ThumbnailImage( $this, $thumbUrl, false, $params );
 		}
+	}
+
+	/**
+	 * Get the physical width to fetch from the foreign repo, snapped up to the next configured
+	 * thumbnail step. This mirrors MediaWiki core's ImageHandler::getSteppedThumbWidth()
+	 * introduced in MW 1.44, adapted to read $wgThumbnailSteps/$wgThumbnailStepsRatio as globals
+	 * since those config names are not registered in MW 1.40.
+	 *
+	 * @param int $requestWidth Requested display width
+	 * @param int $srcWidth Source image width
+	 * @param int $srcHeight Source image height
+	 * @return int Width to actually fetch (snapped up to next step, or unchanged if no steps set)
+	 */
+	private function getSteppedThumbWidth( int $requestWidth, int $srcWidth, int $srcHeight ): int {
+		global $wgThumbnailSteps, $wgThumbnailStepsRatio;
+
+		if ( !$wgThumbnailSteps || !$wgThumbnailStepsRatio ) {
+			return $requestWidth;
+		}
+
+		if ( $wgThumbnailStepsRatio < 1 ) {
+			// If thumbnail ratio is below 100%, build a random number
+			// out of the file name and decide whether to apply adjustments
+			// based on that. This way, we get a good uniformity while not going
+			// back and forth between old and new in different requests.
+			// Also this way, ramping up (e.g. from 0.1 to 0.2) would also
+			// cover the previous values too which would reduce the scale of changes.
+			$hash = hexdec( substr( md5( $this->getName() ), 0, 8 ) ) & 0x7fffffff;
+			if ( ( $hash % 1000 ) > ( $wgThumbnailStepsRatio * 1000 ) ) {
+				return $requestWidth;
+			}
+		}
+
+		foreach ( $wgThumbnailSteps as $widthStep ) {
+			if ( ( $widthStep > $srcWidth ) && !$this->isVectorized() ) {
+				// Round up to original width if there is no step between
+				// desired thumb width & original file width
+				return $srcWidth;
+			}
+			if ( $widthStep == $requestWidth ) {
+				return $requestWidth;
+			}
+			if ( $widthStep > $requestWidth ) {
+				return $widthStep;
+			}
+		}
+
+		return $requestWidth;
 	}
 
 	/**

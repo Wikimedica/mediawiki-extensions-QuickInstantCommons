@@ -4,11 +4,11 @@ namespace MediaWiki\Extension\QuickInstantCommons;
 use MediaWiki\Content\Hook\ContentGetParserOutputHook;
 use MediaWiki\logger\LoggerFactory;
 use MediaWiki\Page\Hook\ImageOpenShowImageInlineBeforeHook;
-use Wikimedia\Rdbms\IConnectionProvider;
+use Wikimedia\Rdbms\ILoadBalancer;
 
 class Hooks implements ContentGetParserOutputHook, ImageOpenShowImageInlineBeforeHook {
 
-	private IConnectionProvider $dbProvider;
+	private ILoadBalancer $dbProvider;
 	/** @var \Config */
 	private $config;
 	/** @var \Psr\Log\LoggerInterface */
@@ -16,7 +16,7 @@ class Hooks implements ContentGetParserOutputHook, ImageOpenShowImageInlineBefor
 	/** @var \RepoGroup */
 	private $repoGroup;
 
-	public function __construct( IConnectionProvider $dbProvider, \Config $config, \RepoGroup $repoGroup ) {
+	public function __construct( ILoadBalancer $dbProvider, \Config $config, \RepoGroup $repoGroup ) {
 		$this->dbProvider = $dbProvider;
 		$this->config = $config;
 		$this->repoGroup = $repoGroup;
@@ -64,7 +64,7 @@ class Hooks implements ContentGetParserOutputHook, ImageOpenShowImageInlineBefor
 			return;
 		}
 		$limit = $this->config->get( 'QuickInstantCommonsPrefetchMaxLimit' );
-		$dbr = $this->dbProvider->getReplicaDatabase();
+		$dbr = $this->dbProvider->getConnectionRef( DB_REPLICA );
 
 		// Get all images previously used in this article that aren't local.
 		$res = $dbr->selectFieldValues(
